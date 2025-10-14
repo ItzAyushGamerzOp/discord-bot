@@ -24,23 +24,16 @@ import sqlite3
 import pickle
 import base64
 import threading
-from flask import Flask, render_template, request, jsonify, session
-from flask_socketio import SocketIO, emit
-import docker
-import paramiko
-import os
-from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('cloudnode_bot.log'),
+        logging.FileHandler('vps_bot.log'),
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger('CloudNodeBot')
 
 # Load environment variables
 load_dotenv()
@@ -58,6 +51,8 @@ DOCKER_NETWORK = os.getenv('DOCKER_NETWORK', 'bridge')
 MAX_CONTAINERS = int(os.getenv('MAX_CONTAINERS', '100'))
 DB_FILE = f'{VPS_SERVICE_NAME.lower()}.db'
 BACKUP_FILE = f'{VPS_SERVICE_NAME.lower()}_backup.pkl'
+
+logger = logging.getLogger(VPS_SERVICE_NAME + 'Bot')
 
 # Known miner process names/patterns
 MINER_PATTERNS = [
@@ -367,7 +362,7 @@ class Database:
         self.conn.close()
 
 # Initialize bot with command prefix '/'
-class CloudNodeBot(commands.Bot):
+class VPSBot(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.db = Database(DB_FILE)
@@ -386,13 +381,11 @@ class CloudNodeBot(commands.Bot):
         self.session = aiohttp.ClientSession()
         try:
             self.docker_client = docker.from_env()
-            logger.info("Docker client initialized successfully")
+            logger.info(f"{VPS_SERVICE_NAME} Docker client initialized successfully")
             self.loop.create_task(self.update_system_stats())
             self.loop.create_task(self.anti_miner_monitor())
             # Reconnect to existing containers
             await self.reconnect_containers()
-            # Restore persistent views
-            await self.restore_persistent_views()
         except Exception as e:
             logger.error(f"Failed to initialize Docker client: {e}")
             self.docker_client = None
@@ -414,11 +407,6 @@ class CloudNodeBot(commands.Bot):
                     self.db.remove_vps(token)
                 except Exception as e:
                     logger.error(f"Error reconnecting container {vps['vps_id']}: {e}")
-
-    async def restore_persistent_views(self):
-        """Restore persistent views after restart"""
-        # This would be implemented to restore any persistent UI components
-        pass
 
     async def anti_miner_monitor(self):
         """Periodically check for mining activities"""
@@ -523,21 +511,6 @@ def has_admin_role(ctx):
     
     return any(role.id == ADMIN_ROLE_ID for role in roles)
 
-async def capture_ssh_session_line(process):
-    """Capture the SSH session line from tmate output"""
-    try:
-        while True:
-            output = await process.stdout.readline()
-            if not output:
-                break
-            output = output.decode('utf-8').strip()
-            if "ssh session:" in output:
-                return output.split("ssh session:")[1].strip()
-        return None
-    except Exception as e:
-        logger.error(f"Error capturing SSH session: {e}")
-        return None
-
 async def run_docker_command(container_id, command, timeout=120):
     """Run a Docker command asynchronously with timeout"""
     try:
@@ -557,46 +530,6 @@ async def run_docker_command(container_id, command, timeout=120):
     except Exception as e:
         logger.error(f"Error running Docker command: {e}")
         return False, str(e)
-
-async def kill_apt_processes(container_id):
-    """Kill any running apt processes"""
-    try:
-        success, _ = await run_docker_command(container_id, ["bash", "-c", "killall apt apt-get dpkg || true"])
-        await asyncio.sleep(2)
-        success, _ = await run_docker_command(container_id, ["bash", "-c", "rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock*"])
-        await asyncio.sleep(2)
-        return success
-    except Exception as e:
-        logger.error(f"Error killing apt processes: {e}")
-        return False
-
-async def wait_for_apt_lock(container_id, status_msg):
-    """Wait for apt lock to be released"""
-    max_attempts = 5
-    for attempt in range(max_attempts):
-        try:
-            await kill_apt_processes(container_id)
-            
-            process = await asyncio.create_subprocess_exec(
-                "docker", "exec", container_id, "bash", "-c", "lsof /var/lib/dpkg/lock-frontend",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
-            
-            if process.returncode != 0:
-                return True
-                
-            if isinstance(status_msg, discord.Interaction):
-                await status_msg.followup.send(f"🔄 Waiting for package manager to be ready... (Attempt {attempt + 1}/{max_attempts})", ephemeral=True)
-            else:
-                await status_msg.edit(content=f"🔄 Waiting for package manager to be ready... (Attempt {attempt + 1}/{max_attempts})")
-            await asyncio.sleep(5)
-        except Exception as e:
-            logger.error(f"Error checking apt lock: {e}")
-            await asyncio.sleep(5)
-    
-    return False
 
 async def build_custom_image(vps_id, username, root_password, user_password, base_image=DEFAULT_OS_IMAGE):
     """Build a custom Docker image using our template"""
@@ -649,7 +582,7 @@ async def build_custom_image(vps_id, username, root_password, user_password, bas
             logger.error(f"Error cleaning up temp directory: {e}")
 
 async def setup_container(container_id, status_msg, memory, username, vps_id=None, use_custom_image=False):
-    """Enhanced container setup with CloudNode customization"""
+    """Enhanced container setup with customization"""
     try:
         # Ensure container is running
         if isinstance(status_msg, discord.Interaction):
@@ -712,11 +645,11 @@ async def setup_container(container_id, status_msg, memory, username, vps_id=Non
                 if not success:
                     raise Exception(f"Failed to setup user: {output}")
 
-        # Set CloudNode customization
+        # Set customization
         if isinstance(status_msg, discord.Interaction):
-            await status_msg.followup.send("🎨 Setting up CloudNode customization...", ephemeral=True)
+            await status_msg.followup.send(f"🎨 Setting up {VPS_SERVICE_NAME} customization...", ephemeral=True)
         else:
-            await status_msg.edit(content="🎨 Setting up CloudNode customization...")
+            await status_msg.edit(content=f"🎨 Setting up {VPS_SERVICE_NAME} customization...")
             
         # Create welcome message file
         welcome_cmd = f"echo '{WELCOME_MESSAGE}' > /etc/motd && echo 'echo \"{WELCOME_MESSAGE}\"' >> /home/{username}/.bashrc"
@@ -731,17 +664,6 @@ async def setup_container(container_id, status_msg, memory, username, vps_id=Non
         success, output = await run_docker_command(container_id, ["bash", "-c", hostname_cmd])
         if not success:
             raise Exception(f"Failed to set hostname: {output}")
-
-        # Set memory limit in cgroup
-        if isinstance(status_msg, discord.Interaction):
-            await status_msg.followup.send("⚙️ Setting resource limits...", ephemeral=True)
-        else:
-            await status_msg.edit(content="⚙️ Setting resource limits...")
-            
-        memory_bytes = memory * 1024 * 1024 * 1024
-        success, output = await run_docker_command(container_id, ["bash", "-c", f"echo {memory_bytes} > /sys/fs/cgroup/memory.max"])
-        if not success:
-            logger.warning(f"Could not set memory limit in cgroup: {output}")
 
         # Set watermark in machine info
         success, output = await run_docker_command(container_id, ["bash", "-c", f"echo '{WATERMARK}' > /etc/machine-info"])
@@ -764,9 +686,9 @@ async def setup_container(container_id, status_msg, memory, username, vps_id=Non
                 logger.warning(f"Security setup command failed: {cmd} - {output}")
 
         if isinstance(status_msg, discord.Interaction):
-            await status_msg.followup.send("✅ CloudNode VPS setup completed successfully!", ephemeral=True)
+            await status_msg.followup.send(f"✅ {VPS_SERVICE_NAME} VPS setup completed successfully!", ephemeral=True)
         else:
-            await status_msg.edit(content="✅ CloudNode VPS setup completed successfully!")
+            await status_msg.edit(content=f"✅ {VPS_SERVICE_NAME} VPS setup completed successfully!")
             
         return True, ssh_password, vps_id
     except Exception as e:
@@ -781,7 +703,7 @@ async def setup_container(container_id, status_msg, memory, username, vps_id=Non
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-bot = CloudNodeBot(command_prefix='/', intents=intents, help_command=None)
+bot = VPSBot(command_prefix='/', intents=intents, help_command=None)
 
 @bot.event
 async def on_ready():
@@ -815,7 +737,8 @@ async def show_commands(ctx):
         embed = discord.Embed(title=f"🤖 {VPS_SERVICE_NAME} VPS Bot Commands", color=discord.Color.blue())
         
         # User commands
-        embed.add_field(name="User Commands", value="""`/create_vps` - Create a new VPS (Admin only)
+        embed.add_field(name="User Commands", value=f"""
+`/create_vps` - Create a new VPS (Admin only)
 `/connect_vps <token>` - Connect to your VPS
 `/list` - List all your VPS instances
 `/help` - Show this help message
@@ -830,7 +753,8 @@ async def show_commands(ctx):
         
         # Admin commands
         if has_admin_role(ctx):
-            embed.add_field(name="Admin Commands", value="""`/vps_list` - List all VPS instances
+            embed.add_field(name="Admin Commands", value=f"""
+`/vps_list` - List all VPS instances
 `/delete_vps <vps_id>` - Delete a VPS
 `/admin_stats` - Show system statistics
 `/cleanup_vps` - Cleanup inactive VPS instances
@@ -913,7 +837,7 @@ async def list_admins(ctx):
     disk="Disk space in GB",
     user="User who will own this VPS",
     os_image="OS image to use (default: ubuntu:22.04)",
-    use_custom_image="Use CloudNode custom image (recommended)"
+    use_custom_image=f"Use {VPS_SERVICE_NAME} custom image (recommended)"
 )
 async def create_vps(ctx, memory: int, cpu: int, disk: int, user: discord.User, os_image: str = DEFAULT_OS_IMAGE, use_custom_image: bool = True):
     """Create a new VPS instance"""
@@ -947,23 +871,23 @@ async def create_vps(ctx, memory: int, cpu: int, disk: int, user: discord.User, 
         await ctx.send("❌ Disk space cannot exceed 100GB!", ephemeral=True)
         return
     
-    status_msg = await ctx.send("🚀 Creating your CloudNode VPS...")
+    status_msg = await ctx.send(f"🚀 Creating your {VPS_SERVICE_NAME} VPS...")
     
     try:
         # Generate unique IDs and passwords
         token = generate_token()
         vps_id = generate_vps_id()
-        username = "cloudnode"
+        username = VPS_SERVICE_NAME.lower()
         root_password = generate_ssh_password()
         user_password = generate_ssh_password()
         
-        await status_msg.edit(content="🔧 Building CloudNode environment...")
+        await status_msg.edit(content=f"🔧 Building {VPS_SERVICE_NAME} environment...")
         
         # Build custom image if requested
         image_to_use = os_image
         if use_custom_image:
             try:
-                await status_msg.edit(content="🏗️ Building custom CloudNode image...")
+                await status_msg.edit(content=f"🏗️ Building custom {VPS_SERVICE_NAME} image...")
                 image_to_use = await build_custom_image(vps_id, username, root_password, user_password, os_image)
             except Exception as e:
                 logger.error(f"Custom image build failed, using base image: {e}")
@@ -996,7 +920,7 @@ async def create_vps(ctx, memory: int, cpu: int, disk: int, user: discord.User, 
         container = bot.docker_client.containers.create(**container_config)
         container.start()
         
-        await status_msg.edit(content="⚙️ Setting up CloudNode VPS...")
+        await status_msg.edit(content=f"⚙️ Setting up {VPS_SERVICE_NAME} VPS...")
         
         # Setup container
         success, ssh_password, final_vps_id = await setup_container(
@@ -1205,7 +1129,7 @@ async def list_vps(ctx):
             description="You don't have any VPS instances yet.",
             color=discord.Color.blue()
         )
-        embed.add_field(name="Get Started", value="Ask an admin to create a VPS for you using `/create_vps`", inline=False)
+        embed.add_field(name="Get Started", value=f"Ask an admin to create a VPS for you using `/create_vps`", inline=False)
         await ctx.send(embed=embed)
         return
     
