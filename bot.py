@@ -36,11 +36,11 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('lexonodes_bot.log'),
+        logging.FileHandler('aterionhost_bot.log'),
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger('LexoNodesBot')
+logger = logging.getLogger('AtherionHostBot')
 
 # Load environment variables
 load_dotenv()
@@ -55,8 +55,8 @@ MAX_VPS_PER_USER = int(os.getenv('MAX_VPS_PER_USER', '3'))
 DEFAULT_OS_IMAGE = os.getenv('DEFAULT_OS_IMAGE', 'ubuntu:22.04')
 DOCKER_NETWORK = os.getenv('DOCKER_NETWORK', 'bridge')
 MAX_CONTAINERS = int(os.getenv('MAX_CONTAINERS', '100'))
-DB_FILE = 'lexonodes.db'
-BACKUP_FILE = 'lexonodes_backup.pkl'
+DB_FILE = 'aterionhost.db'
+BACKUP_FILE = 'aterionhost_backup.pkl'
 
 # Known miner process names/patterns
 MINER_PATTERNS = [
@@ -366,7 +366,7 @@ class Database:
         self.conn.close()
 
 # Initialize bot with command prefix '/'
-class LexoNodesBot(commands.Bot):
+class AtherionHostBot(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.db = Database(DB_FILE)
@@ -778,7 +778,7 @@ async def setup_container(container_id, status_msg, memory, username, vps_id=Non
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-bot = LexoNodesBot(command_prefix='/', intents=intents, help_command=None)
+bot = AtherionHostBot(command_prefix='/', intents=intents, help_command=None)
 
 @bot.event
 async def on_ready():
@@ -2611,10 +2611,10 @@ async def transfer_vps_command(ctx, vps_id: str, new_owner: discord.Member):
 
         bot.db.update_vps(token, {"created_by": str(new_owner.id)})
 
-        await ctx.send(f"✅ LexoNodes VPS {vps_id} has been transferred from {ctx.author.name} to {new_owner.name}!")
+        await ctx.send(f"✅ AterionHost VPS {vps_id} has been transferred from {ctx.author.name} to {new_owner.name}!")
 
         try:
-            embed = discord.Embed(title="LexoNodes VPS Transferred to You", color=discord.Color.green())
+            embed = discord.Embed(title="AtherionHost VPS Transferred to You", color=discord.Color.green())
             embed.add_field(name="VPS ID", value=vps_id, inline=True)
             embed.add_field(name="Previous Owner", value=ctx.author.name, inline=True)
             embed.add_field(name="Memory", value=f"{vps['memory']}GB", inline=True)
