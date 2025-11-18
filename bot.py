@@ -96,11 +96,11 @@ RUN mkdir /var/run/sshd && \\
 RUN systemctl enable ssh && \\
     systemctl enable docker
 
-# LexoNodes customization
+# AtherionHost customization
 RUN echo '{welcome_message}' > /etc/motd && \\
     echo 'echo "{welcome_message}"' >> /home/{username}/.bashrc && \\
     echo '{watermark}' > /etc/machine-info && \\
-    echo 'lexonodes-{vps_id}' > /etc/hostname
+    echo 'atherionhost-{vps_id}' > /etc/hostname
 
 # Install additional useful packages
 RUN apt-get update && \\
